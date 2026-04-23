@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Jakarta EE Banking</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; color: #333; }
+        .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1200px; margin: auto; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h2, h3 { margin-top: 0; color: #1a73e8; }
+        .customer-box { border-left: 4px solid #1a73e8; background: #f8f9fa; margin-bottom: 15px; padding: 15px; border-radius: 4px; }
+        .account-badge { display: inline-block; background: #e8f0fe; color: #1a73e8; padding: 5px 10px; border-radius: 15px; margin: 5px 5px 0 0; font-size: 0.9em; font-weight: bold;}
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        input, select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #1a73e8; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; transition: background 0.3s; }
+        button:hover { background: #1557b0; }
+        .btn-secondary { background: #34a853; margin-top: 10px; }
+        .btn-secondary:hover { background: #2b803f; }
+        .message { padding: 15px; border-radius: 5px; margin-top: 15px; display: none; font-weight: bold; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        ul { padding-left: 20px; }
+    </style>
+</head>
+<body>
+
+<h2 style="text-align: center; margin-bottom: 30px;">Advanced Bank Dashboard (JPA Relations + JTA)</h2>
+
+<div class="dashboard">
+    <div>
+        <div class="card">
+            <h3>Customer Database (1:N Relations)</h3>
+            <div id="customers-container">Loading customers...</div>
+        </div>
+
+        <div class="card" style="margin-top: 20px;">
+            <h3>JPQL Analytics: High Value Accounts</h3>
+            <div class="form-group">
+                <label>Minimum Balance Threshold ($):</label>
+                <input type="number" id="minBalance" value="1000">
+                <button class="btn-secondary" onclick="fetchHighValueAccounts()">Run JPQL Query</button>
+            </div>
+            <ul id="high-value-results"></ul>
+        </div>
+    </div>
+
+    <div>
+        <div class="card">
+            <h3>Execute Money Transfer</h3>
+            <p style="font-size: 0.9em; color: #666;">Choose your JTA Transaction Engine to test boundaries.</p>
+            
+            <div class="form-group">
+                <label>Transaction Engine:</label>
+                <select id="txType">
+                    <option value="cmt">CMT - Container Managed (@Transactional)</option>
+                    <option value="bmt">BMT - Bean Managed (UserTransaction)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>From Account ID:</label>
+                <input type="number" id="fromId" value="1">
+            </div>
+            <div class="form-group">
+                <label>To Account ID:</label>
+                <input type="number" id="toId" value="3">
+            </div>
+            <div class="form-group">
+                <label>Transfer Amount ($):</label>
+                <input type="number" id="amount" placeholder="e.g. 100">
+            </div>
+            
+            <button onclick="performTransfer()">Execute Transfer</button>
+            
+            <div id="resultMessage" class="message"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 1. Fetch Customers and their related Accounts
+    async function loadCustomers() {
+        try {
+            const response = await fetch('/bank/customers');
+            const customers = await response.json();
+            
+            const container = document.getElementById('customers-container');
+            container.innerHTML = ''; // Clear loading text
+            
+            customers.forEach(cust => {
+                let accountHtml = '';
+                cust.accounts.forEach(acc => {
+                    accountHtml += `<span class="account-badge">Acc ID: ${acc.id} | $${acc.balance}</span>`;
+                });
+
+                container.innerHTML += `
+                    <div class="customer-box">
+                        <strong>${cust.name}</strong> (Cust ID: ${cust.id})
+                        <div>${accountHtml}</div>
+                    </div>
+                `;
+            });
+        } catch (error) {
+            console.error("Error fetching customers:", error);
+        }
+    }
+
+    // 2. Fetch High Value Accounts using our JPQL endpoint
+    async function fetchHighValueAccounts() {
+        const min = document.getElementById('minBalance').value;
+        try {
+            const response = await fetch(`/bank/accounts/high-value?min=${min}`);
+            const accounts = await response.json();
+            
+            const list = document.getElementById('high-value-results');
+            list.innerHTML = '';
+            
+            if (accounts.length === 0) {
+                list.innerHTML = '<li>No accounts found.</li>';
+                return;
+            }
+
+            accounts.forEach(acc => {
+                list.innerHTML += `<li>Account ID: ${acc.id} - <strong>$${acc.balance}</strong></li>`;
+            });
+        } catch (error) {
+            console.error("Error fetching JPQL query:", error);
+        }
+    }
+
+    // 3. Perform Transfer using the selected JTA endpoint
+    async function performTransfer() {
+        const txType = document.getElementById('txType').value; // 'cmt' or 'bmt'
+        const fromId = document.getElementById('fromId').value;
+        const toId = document.getElementById('toId').value;
+        const amount = document.getElementById('amount').value;
+
+        if (!amount || amount <= 0) return;
+
+        try {
+            // Dynamically route to either /transfer/cmt or /transfer/bmt
+            const response = await fetch(`/bank/transfer/${txType}?from=${fromId}&to=${toId}&amount=${amount}`, {
+                method: 'POST'
+            });
+
+            const responseText = await response.text();
+
+            if (response.ok) {
+                showMessage(responseText, true);
+                loadCustomers(); // Refresh the UI to show new balances
+                fetchHighValueAccounts(); // Refresh the analytics
+            } else {
+                showMessage(responseText, false);
+            }
+        } catch (error) {
+            showMessage("Network error occurred.", false);
+        }
+    }
+
+    function showMessage(text, isSuccess) {
+        const msgDiv = document.getElementById('resultMessage');
+        msgDiv.style.display = 'block';
+        msgDiv.textContent = text;
+        msgDiv.className = isSuccess ? 'message success' : 'message error';
+        
+        // Hide message after 5 seconds
+        setTimeout(() => { msgDiv.style.display = 'none'; }, 5000);
+    }
+
+    // Initialize UI
+    loadCustomers();
+    fetchHighValueAccounts();
+</script>
+
+</body>
+</html>
